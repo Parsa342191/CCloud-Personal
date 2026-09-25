@@ -18,8 +18,8 @@ android {
         // Android 7.0 (API 23) and earlier are not supported
         minSdk = 24
         targetSdk = 36
-        versionCode = 31
-        versionName = "2.1.0"
+        versionCode = 32
+        versionName = "2.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         

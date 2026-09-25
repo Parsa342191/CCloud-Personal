@@ -143,7 +143,7 @@ fun MainScreen(
             }
         }
     ) { innerPadding ->
-        if (isTv) {
+        if (isTv && currentRoute != AppScreens.Splash.route) {
             // TV layout with sidebar navigation.
             // Extra outer padding keeps content inside the overscan-safe area on TV screens,
             // where content too close to the physical screen edge can get clipped.

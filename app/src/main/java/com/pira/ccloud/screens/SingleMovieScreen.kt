@@ -562,7 +562,8 @@ fun SourceOptionsDialog(
             onDownloadWithADM = { DownloadUtils.openWithADM(context, source.url) },
             onOpenInVLC = { DownloadUtils.openWithVLC(context, source.url) },
             onOpenInMXPlayer = { DownloadUtils.openWithMXPlayer(context, source.url) },
-            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, source.url) }
+            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, source.url) },
+            onOpenWithOtherApp = { DownloadUtils.openWithChooser(context, source.url) }
         )
     }
     

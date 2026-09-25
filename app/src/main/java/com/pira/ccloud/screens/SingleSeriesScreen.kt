@@ -248,7 +248,8 @@ fun SourceOptionsDialog(
             onDownloadWithADM = { DownloadUtils.openWithADM(context, selectedSource!!.url) },
             onOpenInVLC = { DownloadUtils.openWithVLC(context, selectedSource!!.url) },
             onOpenInMXPlayer = { DownloadUtils.openWithMXPlayer(context, selectedSource!!.url) },
-            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, selectedSource!!.url) }
+            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, selectedSource!!.url) },
+            onOpenWithOtherApp = { DownloadUtils.openWithChooser(context, selectedSource!!.url) }
         )
     }
     
@@ -340,7 +341,8 @@ fun DownloadMenu(
             onDownloadWithADM = { DownloadUtils.openWithADM(context, selectedSource!!.url) },
             onOpenInVLC = { DownloadUtils.openWithVLC(context, selectedSource!!.url) },
             onOpenInMXPlayer = { DownloadUtils.openWithMXPlayer(context, selectedSource!!.url) },
-            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, selectedSource!!.url) }
+            onOpenInKMPlayer = { DownloadUtils.openWithKMPlayer(context, selectedSource!!.url) },
+            onOpenWithOtherApp = { DownloadUtils.openWithChooser(context, selectedSource!!.url) }
         )
     }
     

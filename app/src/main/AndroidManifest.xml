@@ -14,9 +14,14 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <!-- Package visibility (required on Android 11+/API 30+): without this,
-         the app cannot see or launch external players like VLC, MX Player,
-         KM Player, or ADM even if they are installed on the device. -->
+    <!--
+        Required on Android 11+ (package visibility). Without declaring these
+        packages here, PackageManager/startActivity cannot "see" the target
+        apps even when they are installed, so launching VLC/MX/KM Player or
+        ADM fails with ActivityNotFoundException and falls into the
+        "not installed" error path in DownloadUtils.kt, even though the app
+        is actually present on the device.
+    -->
     <queries>
         <package android:name="org.videolan.vlc" />
         <package android:name="com.mxtech.videoplayer.ad" />
@@ -29,6 +34,10 @@
         <package android:name="com.dv.adm.pay" />
         <package android:name="com.dv.get" />
         <package android:name="com.dv.adm.old" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />

@@ -76,8 +76,17 @@ object DownloadUtils {
             intent.setPackage("org.videolan.vlc")
             context.startActivity(intent)
         } catch (e: Exception) {
-            // If VLC is not installed, show a message
-            android.widget.Toast.makeText(context, "VLC Player not installed", android.widget.Toast.LENGTH_SHORT).show()
+            // setPackage + setType only succeeds if VLC's manifest happens to declare
+            // an intent-filter that matches "video/*" exactly. Some VLC builds/forks
+            // register slightly different data specs, so a plain ActivityNotFound
+            // here does NOT reliably mean "VLC isn't installed" - it can also mean
+            // "installed, but the direct match failed". Fall back to the chooser,
+            // which asks PackageManager to resolve more broadly, before giving up.
+            try {
+                openWithChooser(context, url)
+            } catch (e2: Exception) {
+                android.widget.Toast.makeText(context, "VLC Player not installed", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
     }
     
@@ -95,12 +104,36 @@ object DownloadUtils {
                 intent.setPackage("com.mxtech.videoplayer.pro") // MX Player Pro
                 context.startActivity(intent)
             } catch (e2: Exception) {
-                // If MX Player is not installed, show a message
-                android.widget.Toast.makeText(context, "MX Player not installed", android.widget.Toast.LENGTH_SHORT).show()
+                // Same reasoning as openWithVLC above: fall back to the chooser
+                // instead of assuming the app is missing.
+                try {
+                    openWithChooser(context, url)
+                } catch (e3: Exception) {
+                    android.widget.Toast.makeText(context, "MX Player not installed", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
     
+    // Generic fallback that lets the user pick from ANY video-capable app
+    // installed on the device, instead of relying on a hardcoded list of
+    // package names. This covers "the rest of the apps" that VLC/MX/KM
+    // don't - e.g. an Android TV specific player, a different fork, etc.
+    // Using Intent.createChooser() also sidesteps Android 11+ package
+    // visibility restrictions: the system resolves and shows matching apps
+    // on our behalf, so we don't need a <queries> entry for every possible
+    // player someone might have installed.
+    fun openWithChooser(context: Context, url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW)
+            intent.setDataAndType(Uri.parse(url), "video/*")
+            val chooser = Intent.createChooser(intent, "Open video with")
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "No app found to play this video", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun openWithKMPlayer(context: Context, url: String) {
         // Try multiple KM Player package names
         val packages = arrayOf(
@@ -124,13 +157,11 @@ object DownloadUtils {
             }
         }
         
-        // If none of the specific packages work, try a general approach
+        // If none of the specific packages work, fall back to the chooser (broader
+        // PackageManager resolution) before concluding nothing is installed.
         if (!success) {
             try {
-                val intent = Intent(Intent.ACTION_VIEW)
-                intent.setDataAndType(Uri.parse(url), "video/*")
-                context.startActivity(intent)
-                success = true
+                openWithChooser(context, url)
             } catch (e: Exception) {
                 // If all else fails, show error message
                 android.widget.Toast.makeText(context, "KM Player not installed", android.widget.Toast.LENGTH_SHORT).show()

@@ -29,7 +29,8 @@ fun DownloadOptionsDialog(
     onDownloadWithADM: () -> Unit,
     onOpenInVLC: () -> Unit,
     onOpenInMXPlayer: () -> Unit,
-    onOpenInKMPlayer: () -> Unit
+    onOpenInKMPlayer: () -> Unit,
+    onOpenWithOtherApp: () -> Unit
 ) {
     val context = LocalContext.current
     val isTv = remember { DeviceUtils.isTv(context) }
@@ -175,6 +176,21 @@ fun DownloadOptionsDialog(
                     )
                 ) {
                     Text("Open in KM Player")
+                }
+                
+                Button(
+                    onClick = {
+                        onOpenWithOtherApp()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                ) {
+                    Text("Open with Other App")
                 }
                 
                 TextButton(

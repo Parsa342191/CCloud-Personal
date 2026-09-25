@@ -25,6 +25,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -74,7 +75,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -393,6 +401,14 @@ fun VideoPlayerScreen(
     var showTrackSelectionDialog by remember { mutableStateOf(false) }
     var currentTracks by remember { mutableStateOf(Tracks.EMPTY) }
     var trackSelector by remember { mutableStateOf<DefaultTrackSelector?>(null) }
+
+    // Focus target that owns TV remote / D-pad key events. onPreviewKeyEvent below
+    // only fires for a node that is focused (or is an ancestor of the focused node) -
+    // without an explicit focusable() + requestFocus() here, nothing in this screen
+    // is ever focused, so the key handling below never actually runs and the remote
+    // does nothing. This requester keeps focus pinned on the root player Box whenever
+    // no dialog/dropdown is open, so play/pause/seek always work.
+    val rootFocusRequester = remember { FocusRequester() }
     
     // Predefined playback speed options
     val speedOptions = remember {
@@ -727,6 +743,20 @@ fun VideoPlayerScreen(
         }
     }
     
+    // Claim D-pad/remote focus for the root player Box on first composition, and
+    // reclaim it whenever a dialog or dropdown that was using focus closes. Without
+    // this, the onPreviewKeyEvent handler on the root Box below never receives any
+    // key events at all (see comment on rootFocusRequester above).
+    LaunchedEffect(showResumePrompt, showTrackSelectionDialog, showSpeedDropdown) {
+        if (!showResumePrompt && !showTrackSelectionDialog && !showSpeedDropdown) {
+            try {
+                rootFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                // Ignore - view may not be laid out yet
+            }
+        }
+    }
+
     // Periodically persist playback progress so it can be resumed later
     LaunchedEffect(exoPlayer) {
         if (exoPlayer == null) return@LaunchedEffect
@@ -799,6 +829,76 @@ fun VideoPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            // Make this Box an actual focus target and pin D-pad/remote focus on it
+            // (see rootFocusRequester above). A node must be focused for the
+            // onPreviewKeyEvent below to ever be called - without focusRequester()
+            // + focusable() here, none of this key handling runs.
+            .focusRequester(rootFocusRequester)
+            .focusable()
+            // Handle TV remote / D-pad input directly, before Compose's focus system
+            // gets a chance to consume DPAD_LEFT/RIGHT/CENTER to move focus between the
+            // on-screen buttons (back, settings, play/pause). Without this, once any
+            // control has focus, arrow keys just hop between buttons instead of seeking,
+            // and OK just clicks whatever is focused instead of toggling play/pause.
+            // onPreviewKeyEvent runs on the way down to the focused child, so returning
+            // true here stops that default focus navigation from happening at all.
+            .onPreviewKeyEvent { keyEvent ->
+                if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // While the resume/start-over prompt, the track selection dialog, or
+                // the speed dropdown is up, let their own buttons receive D-pad
+                // focus/clicks normally.
+                if (showResumePrompt || showTrackSelectionDialog || showSpeedDropdown) return@onPreviewKeyEvent false
+                val player = exoPlayer ?: return@onPreviewKeyEvent false
+
+                when (keyEvent.key) {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> {
+                        isPlaying = !isPlaying
+                        true
+                    }
+                    Key.MediaPlay -> {
+                        isPlaying = true
+                        true
+                    }
+                    Key.MediaPause -> {
+                        isPlaying = false
+                        true
+                    }
+                    Key.DirectionLeft, Key.MediaRewind, Key.MediaSkipBackward -> {
+                        try {
+                            val seekTimeMs = videoPlayerSettings.seekTimeSeconds * 1000L
+                            val newPosition = (player.currentPosition - seekTimeMs).coerceAtLeast(0L)
+                            player.seekTo(newPosition)
+                            currentPosition = newPosition
+                            showRewindIndicator = true
+                        } catch (e: Exception) {
+                            // Ignore seek errors
+                        }
+                        true
+                    }
+                    Key.DirectionRight, Key.MediaFastForward, Key.MediaSkipForward -> {
+                        try {
+                            val seekTimeMs = videoPlayerSettings.seekTimeSeconds * 1000L
+                            val newPosition = (player.currentPosition + seekTimeMs).coerceAtMost(player.duration)
+                            player.seekTo(newPosition)
+                            currentPosition = newPosition
+                            showForwardIndicator = true
+                        } catch (e: Exception) {
+                            // Ignore seek errors
+                        }
+                        true
+                    }
+                    Key.DirectionUp, Key.DirectionDown -> {
+                        // Reveal the controls instead of letting focus wander off-screen
+                        showControls = true
+                        true
+                    }
+                    Key.Back -> {
+                        onBack()
+                        true
+                    }
+                    else -> false
+                }
+            }
             .pointerInput(Unit) {
                 try {
                     detectTapGestures(
@@ -906,6 +1006,14 @@ fun VideoPlayerScreen(
                     PlayerView(ctx).apply {
                         player = exoPlayer
                         useController = false // We're using our own controls
+                        // Never let the raw video surface pick up Android (native) focus.
+                        // On TV, the system auto-focuses the first focusable view when
+                        // nothing else has focus yet; if this view wins that race instead
+                        // of the Compose controls Box, D-pad key events go to a plain
+                        // video surface that does nothing with them and the remote
+                        // appears completely dead.
+                        isFocusable = false
+                        isFocusableInTouchMode = false
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
