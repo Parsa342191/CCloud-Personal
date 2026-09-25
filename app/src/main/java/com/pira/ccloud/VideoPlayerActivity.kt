@@ -77,6 +77,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -409,6 +410,21 @@ fun VideoPlayerScreen(
     // does nothing. This requester keeps focus pinned on the root player Box whenever
     // no dialog/dropdown is open, so play/pause/seek always work.
     val rootFocusRequester = remember { FocusRequester() }
+
+    // Whether the root player Box itself currently owns focus (as opposed to a
+    // descendant, e.g. one of the on-screen control buttons). Used to let the
+    // global play/pause/seek shortcuts below yield to a focused button's own
+    // click handling once the user has navigated onto it with the D-pad -
+    // otherwise OK/Center always toggles play/pause instead of activating
+    // whichever button is actually highlighted.
+    var isRootFocused by remember { mutableStateOf(true) }
+
+    // Focus target for the middle play/pause button, so a D-pad press that reveals
+    // the controls (see onPreviewKeyEvent below) can hand focus straight to it,
+    // the way VLC's Android TV player puts focus on play/pause as soon as the
+    // overlay comes up via the remote.
+    val playPauseFocusRequester = remember { FocusRequester() }
+    var focusControlsOnShow by remember { mutableStateOf(false) }
     
     // Predefined playback speed options
     val speedOptions = remember {
@@ -694,6 +710,14 @@ fun VideoPlayerScreen(
             if (showControls && isPlaying) {
                 delay(3000) // Hide controls after 3 seconds
                 showControls = false
+                // Controls (and whatever button had focus) are about to be removed
+                // from composition - reclaim focus on the root player Box so the
+                // remote keeps working instead of focus being left dangling.
+                try {
+                    rootFocusRequester.requestFocus()
+                } catch (e: Exception) {
+                    // Ignore - view may not be laid out yet
+                }
             }
         } catch (e: Exception) {
             // Ignore delay errors
@@ -754,6 +778,21 @@ fun VideoPlayerScreen(
             } catch (e: Exception) {
                 // Ignore - view may not be laid out yet
             }
+        }
+    }
+
+    // When a D-pad press revealed the controls (see onPreviewKeyEvent above),
+    // hand focus to the play/pause button once it actually exists in the
+    // composition - the IconButton only gets composed after showControls flips
+    // to true, so this can't happen synchronously in the key handler itself.
+    LaunchedEffect(showControls, focusControlsOnShow) {
+        if (showControls && focusControlsOnShow) {
+            try {
+                playPauseFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                // Ignore - view may not be laid out yet
+            }
+            focusControlsOnShow = false
         }
     }
 
@@ -834,14 +873,20 @@ fun VideoPlayerScreen(
             // onPreviewKeyEvent below to ever be called - without focusRequester()
             // + focusable() here, none of this key handling runs.
             .focusRequester(rootFocusRequester)
+            .onFocusChanged { isRootFocused = it.isFocused }
             .focusable()
-            // Handle TV remote / D-pad input directly, before Compose's focus system
-            // gets a chance to consume DPAD_LEFT/RIGHT/CENTER to move focus between the
-            // on-screen buttons (back, settings, play/pause). Without this, once any
-            // control has focus, arrow keys just hop between buttons instead of seeking,
-            // and OK just clicks whatever is focused instead of toggling play/pause.
-            // onPreviewKeyEvent runs on the way down to the focused child, so returning
-            // true here stops that default focus navigation from happening at all.
+            // Handle TV remote / D-pad input the way VLC's Android TV player does:
+            // while nothing on-screen has focus, any D-pad press just reveals the
+            // controls and moves focus onto the play/pause button - it does not
+            // immediately seek or toggle playback. Once a control (button or the
+            // seek bar) actually has focus, arrow keys/Center are left alone so
+            // Compose's normal focus navigation and each control's own handling
+            // (the seek bar reacting to Left/Right only while it is focused, a
+            // button activating on Center) takes over, exactly like a real remote-
+            // driven UI. Dedicated hardware transport keys (play/pause/rewind/
+            // fast-forward on remotes that have them) still work unconditionally,
+            // since they are unambiguous physical buttons rather than D-pad
+            // navigation.
             .onPreviewKeyEvent { keyEvent ->
                 if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 // While the resume/start-over prompt, the track selection dialog, or
@@ -850,53 +895,66 @@ fun VideoPlayerScreen(
                 if (showResumePrompt || showTrackSelectionDialog || showSpeedDropdown) return@onPreviewKeyEvent false
                 val player = exoPlayer ?: return@onPreviewKeyEvent false
 
+                // Dedicated hardware transport keys always work, regardless of focus.
                 when (keyEvent.key) {
-                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> {
-                        isPlaying = !isPlaying
-                        true
-                    }
-                    Key.MediaPlay -> {
-                        isPlaying = true
-                        true
-                    }
-                    Key.MediaPause -> {
-                        isPlaying = false
-                        true
-                    }
-                    Key.DirectionLeft, Key.MediaRewind, Key.MediaSkipBackward -> {
+                    Key.MediaPlayPause -> { isPlaying = !isPlaying; return@onPreviewKeyEvent true }
+                    Key.MediaPlay -> { isPlaying = true; return@onPreviewKeyEvent true }
+                    Key.MediaPause -> { isPlaying = false; return@onPreviewKeyEvent true }
+                    Key.MediaRewind, Key.MediaSkipBackward -> {
                         try {
                             val seekTimeMs = videoPlayerSettings.seekTimeSeconds * 1000L
                             val newPosition = (player.currentPosition - seekTimeMs).coerceAtLeast(0L)
                             player.seekTo(newPosition)
                             currentPosition = newPosition
                             showRewindIndicator = true
-                        } catch (e: Exception) {
-                            // Ignore seek errors
-                        }
-                        true
+                        } catch (e: Exception) { /* Ignore seek errors */ }
+                        return@onPreviewKeyEvent true
                     }
-                    Key.DirectionRight, Key.MediaFastForward, Key.MediaSkipForward -> {
+                    Key.MediaFastForward, Key.MediaSkipForward -> {
                         try {
                             val seekTimeMs = videoPlayerSettings.seekTimeSeconds * 1000L
                             val newPosition = (player.currentPosition + seekTimeMs).coerceAtMost(player.duration)
                             player.seekTo(newPosition)
                             currentPosition = newPosition
                             showForwardIndicator = true
-                        } catch (e: Exception) {
-                            // Ignore seek errors
+                        } catch (e: Exception) { /* Ignore seek errors */ }
+                        return@onPreviewKeyEvent true
+                    }
+                    else -> {}
+                }
+
+                if (isRootFocused) {
+                    // Nothing has focus yet (or the user tapped away from the
+                    // controls) - a D-pad press just brings the overlay up and
+                    // hands focus to the play/pause button, VLC-style.
+                    when (keyEvent.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
+                        Key.DirectionUp, Key.DirectionDown,
+                        Key.DirectionLeft, Key.DirectionRight -> {
+                            showControls = true
+                            focusControlsOnShow = true
+                            true
                         }
-                        true
+                        Key.Back -> {
+                            onBack()
+                            true
+                        }
+                        else -> false
                     }
-                    Key.DirectionUp, Key.DirectionDown -> {
-                        // Reveal the controls instead of letting focus wander off-screen
-                        showControls = true
-                        true
+                } else {
+                    // A control already has focus: let it handle Center/Enter and
+                    // the arrow keys itself instead of intercepting them here.
+                    when (keyEvent.key) {
+                        Key.Back -> {
+                            // First Back press while browsing controls just collapses
+                            // them and returns focus to the player, instead of
+                            // exiting immediately.
+                            showControls = false
+                            try { rootFocusRequester.requestFocus() } catch (e: Exception) { /* Ignore */ }
+                            true
+                        }
+                        else -> false
                     }
-                    Key.Back -> {
-                        onBack()
-                        true
-                    }
-                    else -> false
                 }
             }
             .pointerInput(Unit) {
@@ -1159,6 +1217,7 @@ fun VideoPlayerScreen(
                         onClick = { isPlaying = !isPlaying },
                         modifier = Modifier
                             .size(64.dp)
+                            .focusRequester(playPauseFocusRequester)
                             .background(
                                 color = Color.Black.copy(alpha = 0.7f),
                                 shape = androidx.compose.foundation.shape.CircleShape
