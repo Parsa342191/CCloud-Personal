@@ -350,6 +350,10 @@ class VideoPlayerActivity : ComponentActivity() {
     }
 }
 
+// Which on-screen player control is logically focused while paused - see the
+// self-managed D-pad navigation in VideoPlayerScreen's onPreviewKeyEvent handler.
+private enum class PlayerFocusTarget { BACK, SETTINGS, PLAY_PAUSE, SLIDER }
+
 @Composable
 fun VideoPlayerScreen(
     videoUrl: String,
@@ -438,6 +442,18 @@ fun VideoPlayerScreen(
     // overlay comes up via the remote.
     val playPauseFocusRequester = remember { FocusRequester() }
     var focusControlsOnShow by remember { mutableStateOf(false) }
+
+    // Explicit, self-managed D-pad navigation between the on-screen controls while
+    // paused. Compose's built-in focus system does not reliably auto-navigate (or
+    // trigger a focused button's click) purely from arrow-key/Center presses in this
+    // app's setup, so instead of depending on that, we track which control is
+    // logically focused ourselves and move/activate it directly from the key
+    // handler below - this behaves the same on every device regardless of Compose's
+    // default key-to-focus behavior.
+    val backFocusRequester = remember { FocusRequester() }
+    val settingsFocusRequester = remember { FocusRequester() }
+    val sliderFocusRequester = remember { FocusRequester() }
+    var focusedControl by remember { mutableStateOf(PlayerFocusTarget.PLAY_PAUSE) }
     
     // Predefined playback speed options
     val speedOptions = remember {
@@ -1009,11 +1025,12 @@ fun VideoPlayerScreen(
                         else -> false
                     }
                 } else {
-                    // PAUSED/STOPPED: options become reachable. Let Center/Enter and
-                    // the arrow keys fall through to Compose's own focus navigation
-                    // and each button's click handling - except when nothing has
-                    // focus yet, in which case the first press just reveals the
-                    // controls and hands focus to the play/pause button.
+                    // PAUSED/STOPPED: options become reachable. Navigation between
+                    // Back/Settings/Play-Pause/Slider and activating whichever one is
+                    // focused is handled explicitly here (via focusedControl) rather
+                    // than relying on Compose's own arrow-key focus search or a
+                    // button's default Center-to-click handling - both were found to
+                    // be unreliable in this app's setup.
                     if (isRootFocused) {
                         when (keyEvent.key) {
                             Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
@@ -1030,7 +1047,73 @@ fun VideoPlayerScreen(
                             else -> false
                         }
                     } else {
+                        fun moveTo(target: PlayerFocusTarget, requester: FocusRequester) {
+                            focusedControl = target
+                            try { requester.requestFocus() } catch (e: Exception) { /* Ignore */ }
+                        }
                         when (keyEvent.key) {
+                            Key.DirectionUp -> {
+                                when (focusedControl) {
+                                    PlayerFocusTarget.PLAY_PAUSE -> moveTo(PlayerFocusTarget.BACK, backFocusRequester)
+                                    PlayerFocusTarget.SLIDER -> moveTo(PlayerFocusTarget.PLAY_PAUSE, playPauseFocusRequester)
+                                    else -> {}
+                                }
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                when (focusedControl) {
+                                    PlayerFocusTarget.BACK, PlayerFocusTarget.SETTINGS ->
+                                        moveTo(PlayerFocusTarget.PLAY_PAUSE, playPauseFocusRequester)
+                                    PlayerFocusTarget.PLAY_PAUSE -> moveTo(PlayerFocusTarget.SLIDER, sliderFocusRequester)
+                                    else -> {}
+                                }
+                                true
+                            }
+                            Key.DirectionLeft -> {
+                                when (focusedControl) {
+                                    PlayerFocusTarget.SETTINGS -> moveTo(PlayerFocusTarget.BACK, backFocusRequester)
+                                    PlayerFocusTarget.SLIDER -> {
+                                        // Nudge the paused position back a little while the
+                                        // seek bar itself is focused.
+                                        try {
+                                            val seekTimeMs = videoPlayerSettings.seekTimeSeconds * 1000L
+                                            val newPosition = (player.currentPosition - seekTimeMs).coerceAtLeast(0L)
+                                            player.seekTo(newPosition)
+                                            currentPosition = newPosition
+                                            showRewindIndicator = true
+                                        } catch (e: Exception) { /* Ignore seek errors */ }
+                                    }
+                                    else -> {}
+                                }
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                when (focusedControl) {
+                                    PlayerFocusTarget.BACK -> moveTo(PlayerFocusTarget.SETTINGS, settingsFocusRequester)
+                                    PlayerFocusTarget.SLIDER -> {
+                                        // Nudge the paused position forward a little while the
+                                        // seek bar itself is focused.
+                                        try {
+                                            val seekTimeMs = videoPlayerSettings.seekTimeSeconds * 1000L
+                                            val newPosition = (player.currentPosition + seekTimeMs).coerceAtMost(player.duration)
+                                            player.seekTo(newPosition)
+                                            currentPosition = newPosition
+                                            showForwardIndicator = true
+                                        } catch (e: Exception) { /* Ignore seek errors */ }
+                                    }
+                                    else -> {}
+                                }
+                                true
+                            }
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                when (focusedControl) {
+                                    PlayerFocusTarget.BACK -> onBack()
+                                    PlayerFocusTarget.SETTINGS -> showTrackSelectionDialog = true
+                                    PlayerFocusTarget.PLAY_PAUSE -> isPlaying = true
+                                    PlayerFocusTarget.SLIDER -> isPlaying = true
+                                }
+                                true
+                            }
                             Key.Back -> {
                                 // First Back press while browsing options just collapses
                                 // them and returns focus to the player, instead of
@@ -1301,6 +1384,8 @@ fun VideoPlayerScreen(
                         interactionSource = backInteractionSource,
                         modifier = Modifier
                             .size(48.dp)
+                            .focusRequester(backFocusRequester)
+                            .onFocusChanged { if (it.isFocused) focusedControl = PlayerFocusTarget.BACK }
                             .tvFocusIndication(backInteractionSource, shape = androidx.compose.foundation.shape.CircleShape)
                             .background(
                                 color = Color.Black.copy(alpha = 0.7f),
@@ -1321,6 +1406,8 @@ fun VideoPlayerScreen(
                         interactionSource = settingsInteractionSource,
                         modifier = Modifier
                             .size(48.dp)
+                            .focusRequester(settingsFocusRequester)
+                            .onFocusChanged { if (it.isFocused) focusedControl = PlayerFocusTarget.SETTINGS }
                             .tvFocusIndication(settingsInteractionSource, shape = androidx.compose.foundation.shape.CircleShape)
                             .background(
                                 color = Color.Black.copy(alpha = 0.7f),
@@ -1350,6 +1437,7 @@ fun VideoPlayerScreen(
                         modifier = Modifier
                             .size(64.dp)
                             .focusRequester(playPauseFocusRequester)
+                            .onFocusChanged { if (it.isFocused) focusedControl = PlayerFocusTarget.PLAY_PAUSE }
                             .tvFocusIndication(playPauseInteractionSource, shape = androidx.compose.foundation.shape.CircleShape)
                             .background(
                                 color = Color.Black.copy(alpha = 0.7f),
@@ -1412,7 +1500,10 @@ fun VideoPlayerScreen(
                                     // Ignore errors
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(sliderFocusRequester)
+                                .onFocusChanged { if (it.isFocused) focusedControl = PlayerFocusTarget.SLIDER }
                         )
                     }
                     
