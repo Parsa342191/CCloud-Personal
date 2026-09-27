@@ -24,6 +24,7 @@ import kotlin.math.abs
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -352,7 +353,14 @@ class VideoPlayerActivity : ComponentActivity() {
 
 // Which on-screen player control is logically focused while paused - see the
 // self-managed D-pad navigation in VideoPlayerScreen's onPreviewKeyEvent handler.
-private enum class PlayerFocusTarget { BACK, SETTINGS, PLAY_PAUSE, SLIDER }
+private enum class PlayerFocusTarget { BACK, SETTINGS, PLAY_PAUSE, SLIDER, SPEED, NORMAL_SPEED }
+
+// Keys treated as a single, discrete action (pause/activate/back) rather than
+// something that should keep repeating for as long as the remote button is held.
+// See the repeat-guard in VideoPlayerScreen's onPreviewKeyEvent handler.
+private val oneShotPlayerKeys = setOf(
+    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause, Key.Back
+)
 
 @Composable
 fun VideoPlayerScreen(
@@ -453,6 +461,8 @@ fun VideoPlayerScreen(
     val backFocusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
     val sliderFocusRequester = remember { FocusRequester() }
+    val speedFocusRequester = remember { FocusRequester() }
+    val normalSpeedFocusRequester = remember { FocusRequester() }
     var focusedControl by remember { mutableStateOf(PlayerFocusTarget.PLAY_PAUSE) }
     
     // Predefined playback speed options
@@ -928,12 +938,44 @@ fun VideoPlayerScreen(
             // move focus. Dedicated hardware transport keys (physical play/pause/
             // rewind/fast-forward, on remotes that have them) always work either way.
             .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // The set of keys this handler owns end-to-end. For KeyDown we act
+                // on them (see below); for KeyUp we still consume them here (return
+                // true) so the event never falls through afterwards to whichever
+                // button currently has focus - otherwise Compose's own Center-key
+                // click handling on that focused button would ALSO fire on release,
+                // right after we already acted on the KeyDown, e.g. pausing on press
+                // and having the focused Play/Pause button immediately toggle it
+                // back on release - which is what caused the rapid flicker when
+                // holding a button down.
+                val ownedKey = when (keyEvent.key) {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
+                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight,
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
+                    Key.MediaRewind, Key.MediaFastForward, Key.MediaSkipBackward, Key.MediaSkipForward,
+                    Key.Back -> true
+                    else -> false
+                }
+                if (keyEvent.type != KeyEventType.KeyDown) {
+                    return@onPreviewKeyEvent ownedKey && !(showResumePrompt || showTrackSelectionDialog || showSpeedDropdown)
+                }
                 // While the resume/start-over prompt, the track selection dialog, or
                 // the speed dropdown is up, let their own buttons receive D-pad
                 // focus/clicks normally.
                 if (showResumePrompt || showTrackSelectionDialog || showSpeedDropdown) return@onPreviewKeyEvent false
                 val player = exoPlayer ?: return@onPreviewKeyEvent false
+
+                // While a remote button is held down, Android keeps sending KeyDown
+                // events with an increasing repeatCount instead of a single press.
+                // Center/Enter/Back are one-shot actions (pause, activate a button,
+                // go back) - if we acted on every repeat, holding OK would toggle
+                // play/pause on and off rapidly for as long as it's held, which is
+                // exactly the stutter that was reported. Seeking/volume/navigation
+                // are fine (even nice) to keep repeating while held, so only these
+                // one-shot keys are limited to the initial press.
+                val isRepeat = keyEvent.nativeKeyEvent.repeatCount > 0
+                if (isRepeat && keyEvent.key in oneShotPlayerKeys) {
+                    return@onPreviewKeyEvent true
+                }
 
                 // Dedicated hardware transport keys always work, regardless of
                 // whether the video is playing/paused or what has focus.
@@ -1056,6 +1098,8 @@ fun VideoPlayerScreen(
                                 when (focusedControl) {
                                     PlayerFocusTarget.PLAY_PAUSE -> moveTo(PlayerFocusTarget.BACK, backFocusRequester)
                                     PlayerFocusTarget.SLIDER -> moveTo(PlayerFocusTarget.PLAY_PAUSE, playPauseFocusRequester)
+                                    PlayerFocusTarget.SPEED, PlayerFocusTarget.NORMAL_SPEED ->
+                                        moveTo(PlayerFocusTarget.SLIDER, sliderFocusRequester)
                                     else -> {}
                                 }
                                 true
@@ -1065,6 +1109,7 @@ fun VideoPlayerScreen(
                                     PlayerFocusTarget.BACK, PlayerFocusTarget.SETTINGS ->
                                         moveTo(PlayerFocusTarget.PLAY_PAUSE, playPauseFocusRequester)
                                     PlayerFocusTarget.PLAY_PAUSE -> moveTo(PlayerFocusTarget.SLIDER, sliderFocusRequester)
+                                    PlayerFocusTarget.SLIDER -> moveTo(PlayerFocusTarget.SPEED, speedFocusRequester)
                                     else -> {}
                                 }
                                 true
@@ -1072,6 +1117,7 @@ fun VideoPlayerScreen(
                             Key.DirectionLeft -> {
                                 when (focusedControl) {
                                     PlayerFocusTarget.SETTINGS -> moveTo(PlayerFocusTarget.BACK, backFocusRequester)
+                                    PlayerFocusTarget.NORMAL_SPEED -> moveTo(PlayerFocusTarget.SPEED, speedFocusRequester)
                                     PlayerFocusTarget.SLIDER -> {
                                         // Nudge the paused position back a little while the
                                         // seek bar itself is focused.
@@ -1090,6 +1136,7 @@ fun VideoPlayerScreen(
                             Key.DirectionRight -> {
                                 when (focusedControl) {
                                     PlayerFocusTarget.BACK -> moveTo(PlayerFocusTarget.SETTINGS, settingsFocusRequester)
+                                    PlayerFocusTarget.SPEED -> moveTo(PlayerFocusTarget.NORMAL_SPEED, normalSpeedFocusRequester)
                                     PlayerFocusTarget.SLIDER -> {
                                         // Nudge the paused position forward a little while the
                                         // seek bar itself is focused.
@@ -1111,6 +1158,8 @@ fun VideoPlayerScreen(
                                     PlayerFocusTarget.SETTINGS -> showTrackSelectionDialog = true
                                     PlayerFocusTarget.PLAY_PAUSE -> isPlaying = true
                                     PlayerFocusTarget.SLIDER -> isPlaying = true
+                                    PlayerFocusTarget.SPEED -> showSpeedDropdown = true
+                                    PlayerFocusTarget.NORMAL_SPEED -> playbackSpeed = 1.0f
                                 }
                                 true
                             }
@@ -1563,10 +1612,17 @@ fun VideoPlayerScreen(
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Box {
+                                val speedInteractionSource = remember { MutableInteractionSource() }
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
-                                        .clickable { showSpeedDropdown = true }
+                                        .focusRequester(speedFocusRequester)
+                                        .onFocusChanged { if (it.isFocused) focusedControl = PlayerFocusTarget.SPEED }
+                                        .tvFocusIndication(speedInteractionSource, shape = RoundedCornerShape(8.dp))
+                                        .clickable(
+                                            interactionSource = speedInteractionSource,
+                                            indication = LocalIndication.current
+                                        ) { showSpeedDropdown = true }
                                         .padding(4.dp)
                                 ) {
                                     Icon(
@@ -1612,13 +1668,20 @@ fun VideoPlayerScreen(
                             Spacer(modifier = Modifier.width(4.dp))
                             
                             // Normal speed button
+                            val normalSpeedInteractionSource = remember { MutableInteractionSource() }
                             Text(
                                 text = "Normal",
                                 color = if (playbackSpeed == 1.0f) MaterialTheme.colorScheme.primary else Color.White,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (playbackSpeed == 1.0f) FontWeight.Bold else FontWeight.Normal,
                                 modifier = Modifier
-                                    .clickable { playbackSpeed = 1.0f }
+                                    .focusRequester(normalSpeedFocusRequester)
+                                    .onFocusChanged { if (it.isFocused) focusedControl = PlayerFocusTarget.NORMAL_SPEED }
+                                    .tvFocusIndication(normalSpeedInteractionSource, shape = RoundedCornerShape(8.dp))
+                                    .clickable(
+                                        interactionSource = normalSpeedInteractionSource,
+                                        indication = LocalIndication.current
+                                    ) { playbackSpeed = 1.0f }
                                     .padding(4.dp),
                                 fontFamily = FontManager.loadFontFamily(context, fontSettings.fontType)
                             )
