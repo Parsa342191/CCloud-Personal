@@ -71,7 +71,7 @@ object PlayerCoreFactory {
         // particular stream - common with the wide mix of codecs seen on
         // IPTV/VOD sources.
         val renderersFactory = DefaultRenderersFactory(appContext)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERERS_MODE_PREFER)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             .setEnableDecoderFallback(true)
 
         // Buffering profile: TVs get a larger buffer window since they're
