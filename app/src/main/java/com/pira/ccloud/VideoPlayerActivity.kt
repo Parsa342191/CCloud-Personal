@@ -103,6 +103,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.pira.ccloud.player.PlayerCoreFactory
 import com.pira.ccloud.data.model.SubtitleSettings
 import com.pira.ccloud.data.model.VideoPlayerSettings
 import com.pira.ccloud.data.model.FontSettings
@@ -522,9 +523,7 @@ fun VideoPlayerScreen(
             val selector = DefaultTrackSelector(context)
             trackSelector = selector
             
-            ExoPlayer.Builder(context)
-                .setTrackSelector(selector)
-                .build().apply {
+            PlayerCoreFactory.create(context, selector).apply {
                     try {
                         setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)))
                         prepare()

@@ -136,11 +136,17 @@ dependencies {
     implementation(libs.accompanist.systemuicontroller)
     implementation(libs.coil.compose)
     
-    // ExoPlayer for video playback
-    implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
-    implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    // ExoPlayer core (Media3) - upgraded to the current stable release.
+    // media3-datasource-okhttp lets the player reuse OkHttp's connection pool
+    // and redirect handling (important for IPTV links that bounce through
+    // several redirects). media3-exoplayer-rtsp adds RTSP source support.
+    val media3Version = "1.10.1"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-rtsp:$media3Version")
+    implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
     
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
