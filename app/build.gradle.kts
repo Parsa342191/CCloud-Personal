@@ -155,7 +155,16 @@ dependencies {
     // for the "HW+" and "SW" decoder modes (broader codec/format compatibility, similar
     // to MX Player's decoder selector). Licensed GPL-3.0 - check that license fits your
     // distribution plans before shipping a release build.
-    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:$media3Version+1")
+    //
+    // NOTE: pinned to its own version, independent of media3Version above. Jellyfin
+    // builds this against a specific Media3 release and does not publish a new
+    // "<mediaVersion>+1" artifact every time Media3 itself gets a new release, so
+    // deriving this from media3Version breaks as soon as Media3 is bumped past
+    // whatever Jellyfin has actually built against (exactly what happened here:
+    // there is no 1.10.1+1 build). 1.9.0+1 is the latest one Jellyfin has published
+    // as of this writing - check https://github.com/jellyfin/jellyfin-androidx-media/releases
+    // before bumping it further.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
     
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
