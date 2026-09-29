@@ -6,7 +6,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -50,9 +49,15 @@ object PlayerCoreFactory {
      * Creates a fully configured [ExoPlayer]. Caller is still responsible
      * for setMediaItem/prepare/playWhenReady etc., exactly as before - only
      * how the player itself is built has changed.
+     *
+     * @param decoderMode HW / HW+ / SW decoder core selection - see [DecoderMode].
      */
     @OptIn(markerClass = [UnstableApi::class])
-    fun create(context: Context, trackSelector: DefaultTrackSelector): ExoPlayer {
+    fun create(
+        context: Context,
+        trackSelector: DefaultTrackSelector,
+        decoderMode: DecoderMode = DecoderMode.HW_PLUS
+    ): ExoPlayer {
         val appContext = context.applicationContext
         val isTv = DeviceUtils.isTv(appContext)
 
@@ -66,13 +71,9 @@ object PlayerCoreFactory {
         val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
             .setDataSourceFactory(dataSourceFactory)
 
-        // Let the decoder fall back to a software/alternate codec instead of
-        // hard-failing when a device's hardware decoder can't handle a
-        // particular stream - common with the wide mix of codecs seen on
-        // IPTV/VOD sources.
-        val renderersFactory = DefaultRenderersFactory(appContext)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-            .setEnableDecoderFallback(true)
+        // Decoder core: HW / HW+ / SW, mirroring MX Player's well known decoder
+        // switcher. See DecoderMode.kt for what each mode does.
+        val renderersFactory = buildRenderersFactory(appContext, decoderMode)
 
         // Buffering profile: TVs get a larger buffer window since they're
         // usually on a fixed network connection and benefit most from

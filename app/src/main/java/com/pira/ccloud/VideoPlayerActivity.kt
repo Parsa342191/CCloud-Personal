@@ -421,6 +421,18 @@ fun VideoPlayerScreen(
     var wasPlayingBeforeSeek by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
     var showSpeedDropdown by remember { mutableStateOf(false) }
+    var decoderMode by remember {
+        mutableStateOf(
+            com.pira.ccloud.player.DecoderMode.fromStorageValue(
+                try {
+                    StorageUtils.loadVideoPlayerSettings(context).decoderMode
+                } catch (e: Exception) {
+                    null
+                }
+            )
+        )
+    }
+    var showDecoderDropdown by remember { mutableStateOf(false) }
     var playerInitialized by remember { mutableStateOf(false) }
     var hasMarkedAsWatched by remember { mutableStateOf(false) }
     
@@ -517,13 +529,16 @@ fun VideoPlayerScreen(
         }
     }
     
-    val exoPlayer = remember(context) {
+    // Re-keyed on decoderMode so picking a different decoder core in the dropdown
+    // below tears down the current ExoPlayer and rebuilds one with the new
+    // RenderersFactory - the switch applies immediately, no need to leave the screen.
+    val exoPlayer = remember(context, decoderMode) {
         try {
             // Create track selector for track selection
             val selector = DefaultTrackSelector(context)
             trackSelector = selector
             
-            PlayerCoreFactory.create(context, selector).apply {
+            PlayerCoreFactory.create(context, selector, decoderMode).apply {
                     try {
                         setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)))
                         prepare()
@@ -1684,6 +1699,73 @@ fun VideoPlayerScreen(
                                     .padding(4.dp),
                                 fontFamily = FontManager.loadFontFamily(context, fontSettings.fontType)
                             )
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // Decoder core selector (HW / HW+ / SW), similar to MX Player's
+                        // decoder switcher. Changing it rebuilds the ExoPlayer with a
+                        // RenderersFactory configured for the chosen mode (see DecoderMode.kt).
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Box {
+                                val decoderInteractionSource = remember { MutableInteractionSource() }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .tvFocusIndication(decoderInteractionSource, shape = RoundedCornerShape(8.dp))
+                                        .clickable(
+                                            interactionSource = decoderInteractionSource,
+                                            indication = LocalIndication.current
+                                        ) { showDecoderDropdown = true }
+                                        .padding(4.dp)
+                                ) {
+                                    Text(
+                                        text = decoderMode.name.replace("_PLUS", "+"),
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontManager.loadFontFamily(context, fontSettings.fontType)
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showDecoderDropdown,
+                                    onDismissRequest = { showDecoderDropdown = false },
+                                    modifier = Modifier.background(Color.Black)
+                                ) {
+                                    com.pira.ccloud.player.DecoderMode.entries.forEach { mode ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = com.pira.ccloud.player.displayName(mode),
+                                                    color = if (mode == decoderMode) MaterialTheme.colorScheme.primary else Color.White,
+                                                    fontFamily = FontManager.loadFontFamily(context, fontSettings.fontType)
+                                                )
+                                            },
+                                            onClick = {
+                                                decoderMode = mode
+                                                showDecoderDropdown = false
+                                                try {
+                                                    val current = StorageUtils.loadVideoPlayerSettings(context)
+                                                    StorageUtils.saveVideoPlayerSettings(
+                                                        context,
+                                                        current.copy(decoderMode = mode.name)
+                                                    )
+                                                } catch (e: Exception) {
+                                                    // Ignore persistence errors; selection still
+                                                    // applies for the current playback session.
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                         
                         Text(

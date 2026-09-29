@@ -18,8 +18,8 @@ android {
         // Android 7.0 (API 23) and earlier are not supported
         minSdk = 24
         targetSdk = 36
-        versionCode = 37
-        versionName = "2.1.6"
+        versionCode = 38
+        versionName = "2.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -147,6 +147,15 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-rtsp:$media3Version")
     implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
+
+    // FFmpeg software decoder extension for Media3/ExoPlayer.
+    // Prebuilt by the Jellyfin project from the official androidx/media decoder_ffmpeg
+    // sources (Google does not publish this module to Maven Central directly because it
+    // must be built manually). Provides FfmpegAudioRenderer / FfmpegVideoRenderer used
+    // for the "HW+" and "SW" decoder modes (broader codec/format compatibility, similar
+    // to MX Player's decoder selector). Licensed GPL-3.0 - check that license fits your
+    // distribution plans before shipping a release build.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:$media3Version+1")
     
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
