@@ -9,6 +9,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import com.pira.ccloud.utils.DeviceUtils
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -70,6 +71,12 @@ object PlayerCoreFactory {
 
         val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
             .setDataSourceFactory(dataSourceFactory)
+            // Strips leftover ASS/SSA override-tag text (positioning, fades,
+            // karaoke timings, etc.) that Media3's own SSA parser doesn't fully
+            // consume, so those raw tag codes/numbers stop leaking into what's
+            // displayed on screen next to the actual subtitle line. See
+            // CleanedSubtitleParserFactory's own doc comment for details/limits.
+            .setSubtitleParserFactory(CleanedSubtitleParserFactory(DefaultSubtitleParserFactory()))
 
         // Decoder core: HW / HW+ / SW, mirroring MX Player's well known decoder
         // switcher. See DecoderMode.kt for what each mode does.

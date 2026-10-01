@@ -98,6 +98,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -112,6 +113,7 @@ import com.pira.ccloud.utils.StorageUtils
 import com.pira.ccloud.ui.theme.FontManager
 import com.pira.ccloud.ui.theme.tvFocusIndication
 import kotlinx.coroutines.CoroutineScope
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -542,8 +544,13 @@ fun VideoPlayerScreen(
                     try {
                         setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)))
                         prepare()
-                        // If we're retrying, seek to the current position
-                        if (isRetrying && currentPosition > 0) {
+                        // Resume from wherever playback currently was - this path runs both
+                        // on an actual retry AND whenever the user picks a different decoder
+                        // mode from the dropdown (that also tears down and rebuilds the
+                        // ExoPlayer instance via the remember(decoderMode) key above), so it
+                        // must not be limited to isRetrying or switching decoders would
+                        // restart the video from 0:00.
+                        if (currentPosition > 0) {
                             seekTo(currentPosition)
                         }
                         playWhenReady = isPlaying // Start with current play state
@@ -1889,9 +1896,7 @@ fun TrackSelectionDialog(
         audioTrackGroups.firstOrNull { it.isSelected }?.let { group ->
             (0 until group.length).firstOrNull { group.isTrackSelected(it) }?.let { index ->
                 val format = group.getTrackFormat(index)
-                format.language?.let { 
-                    if (it.isNotEmpty()) it else format.label ?: "Track $index"
-                } ?: format.label ?: "Track $index"
+                formatTrackLabel(format, isAudio = true, fallbackIndexLabel = "Track $index")
             }
         } ?: "None"
     }
@@ -1900,9 +1905,7 @@ fun TrackSelectionDialog(
         textTrackGroups.firstOrNull { it.isSelected }?.let { group ->
             (0 until group.length).firstOrNull { group.isTrackSelected(it) }?.let { index ->
                 val format = group.getTrackFormat(index)
-                format.language?.let { 
-                    if (it.isNotEmpty()) it else format.label ?: "Subtitle $index"
-                } ?: format.label ?: "Subtitle $index"
+                formatTrackLabel(format, isAudio = false, fallbackIndexLabel = "Subtitle $index")
             }
         } ?: "None"
     }
@@ -1986,9 +1989,11 @@ fun TrackSelectionDialog(
                             audioTrackGroups.forEachIndexed { groupIndex, trackGroup ->
                                 for (i in 0 until trackGroup.length) {
                                     val format = trackGroup.getTrackFormat(i)
-                                    val trackName = format.language?.let { 
-                                        if (it.isNotEmpty()) it else format.label ?: "Track ${groupIndex + 1}.${i + 1}"
-                                    } ?: format.label ?: "Track ${groupIndex + 1}.${i + 1}"
+                                    val trackName = formatTrackLabel(
+                                        format,
+                                        isAudio = true,
+                                        fallbackIndexLabel = "Track ${groupIndex + 1}.${i + 1}"
+                                    )
                                     
                                     DropdownMenuItem(
                                         text = {
@@ -2081,9 +2086,11 @@ fun TrackSelectionDialog(
                             textTrackGroups.forEachIndexed { groupIndex, trackGroup ->
                                 for (i in 0 until trackGroup.length) {
                                     val format = trackGroup.getTrackFormat(i)
-                                    val trackName = format.language?.let { 
-                                        if (it.isNotEmpty()) it else format.label ?: "Subtitle ${groupIndex + 1}.${i + 1}"
-                                    } ?: format.label ?: "Subtitle ${groupIndex + 1}.${i + 1}"
+                                    val trackName = formatTrackLabel(
+                                        format,
+                                        isAudio = false,
+                                        fallbackIndexLabel = "Subtitle ${groupIndex + 1}.${i + 1}"
+                                    )
                                     
                                     DropdownMenuItem(
                                         text = {
@@ -2123,6 +2130,68 @@ fun TrackSelectionDialog(
             }
         }
     )
+}
+
+/**
+ * Builds a readable track label the way MX Player's track picker does, instead of
+ * falling back to a bare "Track 3" / "Subtitle 2" index the moment a stream has no
+ * embedded language tag or title - which many IPTV/muxed streams don't. Prefers, in
+ * order: a proper language name resolved from the ISO code (e.g. "eng" -> "English"),
+ * an embedded label, then codec/channel info pulled from the format itself (e.g.
+ * "AC-3 · 5.1ch", "SRT"), and only falls back to the bare index label if the format
+ * truly carries none of that.
+ */
+fun formatTrackLabel(format: Format, isAudio: Boolean, fallbackIndexLabel: String): String {
+    val languageName = format.language
+        ?.takeIf { it.isNotBlank() && !it.equals("und", ignoreCase = true) }
+        ?.let { code ->
+            try {
+                val display = Locale(code).getDisplayLanguage(Locale.getDefault())
+                if (display.isNotBlank() && !display.equals(code, ignoreCase = true)) display else null
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    val codecTag = format.sampleMimeType
+        ?.substringAfterLast('/')
+        ?.uppercase(Locale.US)
+        ?.let { raw ->
+            when (raw) {
+                "MP4A-LATM" -> "AAC"
+                "A52", "AC3" -> "AC-3"
+                "EAC3" -> "E-AC-3"
+                "MP4A" -> "AAC"
+                else -> raw
+            }
+        }
+
+    val extraInfo = if (isAudio) {
+        buildList {
+            codecTag?.let { add(it) }
+            if (format.channelCount > 0) {
+                add(
+                    when (format.channelCount) {
+                        1 -> "Mono"
+                        2 -> "Stereo"
+                        else -> "${format.channelCount}ch"
+                    }
+                )
+            }
+        }.joinToString(" · ")
+    } else {
+        codecTag.orEmpty()
+    }
+
+    val embeddedLabel = format.label?.takeIf { it.isNotBlank() }
+
+    return when {
+        languageName != null && extraInfo.isNotBlank() -> "$languageName ($extraInfo)"
+        languageName != null -> languageName
+        embeddedLabel != null -> embeddedLabel
+        extraInfo.isNotBlank() -> extraInfo
+        else -> fallbackIndexLabel
+    }
 }
 
 fun formatTime(milliseconds: Long): String {
