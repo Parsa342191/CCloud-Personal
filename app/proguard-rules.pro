@@ -24,5 +24,10 @@
 -keep class androidx.media3.** { *; }
 -dontwarn androidx.media3.**
 
+# libass (ass-media) - keep its classes intact, in particular its JNI-bound
+# native methods, which R8 could otherwise rename/strip in a release build.
+-keep class io.github.peerless2012.** { *; }
+-dontwarn io.github.peerless2012.**
+
 # Kotlin serialization
 -keep class com.pira.ccloud.data.model.** { *; }

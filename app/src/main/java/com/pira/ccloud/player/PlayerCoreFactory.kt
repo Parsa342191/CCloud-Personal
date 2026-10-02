@@ -11,6 +11,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import com.pira.ccloud.utils.DeviceUtils
+import io.github.peerless2012.ass.media.AssRenderType
+import io.github.peerless2012.ass.media.buildWithAssSupport
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -108,10 +110,19 @@ object PlayerCoreFactory {
                 .setAllowAudioMixedMimeTypeAdaptiveness(true)
         )
 
+        // libass engine for .ass/.ssa subtitles: real positioning, karaoke,
+        // per-line fonts/colors/animation, taken from the subtitle file itself
+        // instead of Media3's own simplified SSA parser (the CleanedSubtitleParserFactory
+        // above was a workaround for that parser's limits). This only changes how
+        // ASS/SSA tracks are rendered - plain .srt/.vtt subtitles keep going through
+        // the app's normal styled SubtitleView/SubtitleSettings untouched, and the
+        // rest of the player UI (controls, dialogs, colors) isn't touched at all.
+        // OVERLAY_OPEN_GL: full animation support, doesn't block the UI thread,
+        // lowest memory use of the two overlay modes (see ass-media's README).
         return ExoPlayer.Builder(appContext, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
-            .build()
+            .buildWithAssSupport(appContext, AssRenderType.OVERLAY_OPEN_GL)
     }
 }

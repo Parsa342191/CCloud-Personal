@@ -18,8 +18,8 @@ android {
         // Android 7.0 (API 23) and earlier are not supported
         minSdk = 24
         targetSdk = 36
-        versionCode = 40
-        versionName = "2.1.9"
+        versionCode = 41
+        versionName = "2.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -165,6 +165,14 @@ dependencies {
     // as of this writing - check https://github.com/jellyfin/jellyfin-androidx-media/releases
     // before bumping it further.
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
+
+    // libass engine for properly styled .ass/.ssa subtitles (positioning, karaoke,
+    // custom fonts/colors baked into the subtitle file itself) - used by Jellyfin's
+    // own Android TV app, MIT licensed. Only renders when an .ass/.ssa track is
+    // selected; plain .srt/.vtt subtitles keep using the app's existing styled
+    // SubtitleView and SubtitleSettings exactly as before, so the player's look
+    // doesn't change for anything except real ASS subtitles.
+    implementation("io.github.peerless2012:ass-media:0.5.1")
     
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
