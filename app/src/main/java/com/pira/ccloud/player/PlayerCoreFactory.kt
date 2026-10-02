@@ -7,12 +7,10 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import com.pira.ccloud.utils.DeviceUtils
-import io.github.peerless2012.ass.media.AssRenderType
-import io.github.peerless2012.ass.media.buildWithAssSupport
+import io.github.peerless2012.ass.media.kt.buildWithAssSupport
+import io.github.peerless2012.ass.media.type.AssRenderType
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -71,15 +69,6 @@ object PlayerCoreFactory {
 
         val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
 
-        val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
-            .setDataSourceFactory(dataSourceFactory)
-            // Strips leftover ASS/SSA override-tag text (positioning, fades,
-            // karaoke timings, etc.) that Media3's own SSA parser doesn't fully
-            // consume, so those raw tag codes/numbers stop leaking into what's
-            // displayed on screen next to the actual subtitle line. See
-            // CleanedSubtitleParserFactory's own doc comment for details/limits.
-            .setSubtitleParserFactory(CleanedSubtitleParserFactory(DefaultSubtitleParserFactory()))
-
         // Decoder core: HW / HW+ / SW, mirroring MX Player's well known decoder
         // switcher. See DecoderMode.kt for what each mode does.
         val renderersFactory = buildRenderersFactory(appContext, decoderMode)
@@ -110,19 +99,29 @@ object PlayerCoreFactory {
                 .setAllowAudioMixedMimeTypeAdaptiveness(true)
         )
 
-        // libass engine for .ass/.ssa subtitles: real positioning, karaoke,
-        // per-line fonts/colors/animation, taken from the subtitle file itself
-        // instead of Media3's own simplified SSA parser (the CleanedSubtitleParserFactory
-        // above was a workaround for that parser's limits). This only changes how
-        // ASS/SSA tracks are rendered - plain .srt/.vtt subtitles keep going through
-        // the app's normal styled SubtitleView/SubtitleSettings untouched, and the
-        // rest of the player UI (controls, dialogs, colors) isn't touched at all.
-        // OVERLAY_OPEN_GL: full animation support, doesn't block the UI thread,
-        // lowest memory use of the two overlay modes (see ass-media's README).
-        return ExoPlayer.Builder(appContext, renderersFactory)
-            .setMediaSourceFactory(mediaSourceFactory)
+        // libass engine for .ass/.ssa subtitles: real positioning, colors/fonts
+        // and karaoke taken from the subtitle file itself (rasterized by libass),
+        // instead of Media3's own simplified SSA parser. CUES mode feeds that
+        // rendering through the player's existing SubtitleView - the same view
+        // plain .srt/.vtt subtitles already use - so no extra view wiring is
+        // needed and the player's theme/layout is untouched either way. The
+        // trade-off vs. the library's OVERLAY modes: continuous ASS animation
+        // (movement, fades) plays back as timed segments rather than a smooth
+        // per-frame overlay - style, position and color are unaffected.
+        //
+        // buildWithAssSupport builds its own MediaSourceFactory/subtitle parser
+        // internally, so our OkHttp data source and HW/HW+/SW renderersFactory
+        // are passed in by name here (instead of via ExoPlayer.Builder/
+        // .setMediaSourceFactory as before) so it wraps *our* setup instead of
+        // silently replacing it with its own defaults.
+        return ExoPlayer.Builder(appContext)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
-            .buildWithAssSupport(appContext, AssRenderType.OVERLAY_OPEN_GL)
+            .buildWithAssSupport(
+                context = appContext,
+                renderType = AssRenderType.CUES,
+                dataSourceFactory = dataSourceFactory,
+                renderersFactory = renderersFactory
+            )
     }
 }
