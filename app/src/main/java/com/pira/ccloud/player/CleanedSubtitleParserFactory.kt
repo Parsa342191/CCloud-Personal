@@ -3,6 +3,7 @@ package com.pira.ccloud.player
 import android.text.SpannableStringBuilder
 import androidx.annotation.OptIn
 import androidx.media3.common.Format
+import androidx.media3.common.text.Cue
 import androidx.media3.common.util.Consumer
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.extractor.text.CuesWithTiming
@@ -85,10 +86,76 @@ class CleanedSubtitleParserFactory(
                     cue
                 }
             }
-            return if (changed) {
-                CuesWithTiming(cleanedCues, input.startTimeUs, input.durationUs)
+            val (destackedCues, destackChanged) = destackOverlappingCues(cleanedCues)
+            return if (changed || destackChanged) {
+                CuesWithTiming(destackedCues, input.startTimeUs, input.durationUs)
             } else {
                 input
+            }
+        }
+
+        /**
+         * Media3's built-in subtitle view has no collision avoidance between
+         * simultaneous cues that land on the exact same line (this is a known,
+         * still-unfixed upstream limitation - see androidx/media#3151): two active
+         * cues sharing the same position - e.g. two unrelated "subscribe to our
+         * channel"-style credit lines both anchored to the default bottom position -
+         * get drawn directly on top of each other instead of stacked. This nudges
+         * every cue after the first one sharing a given (line, lineType) onto its
+         * own line so they're readable side by side instead of overlapping.
+         *
+         * This is a coarse approximation of real layout (it doesn't know the actual
+         * rendered height of each cue in pixels the way Media3's own SubtitlePainter
+         * does internally), but it's enough to turn "two lines merged into unreadable
+         * mush" into "two separate, readable lines" for the common case of several
+         * simultaneous cues sharing the same default/explicit position.
+         */
+        private fun destackOverlappingCues(cues: List<Cue>): Pair<List<Cue>, Boolean> {
+            if (cues.size < 2) return cues to false
+
+            val stackIndexByLineKey = HashMap<Pair<Float, Int>, Int>()
+            var changed = false
+            val result = cues.map { cue ->
+                // A cue with no explicit line is rendered at the view's own default
+                // position (bottom, in practice) - group those together under a
+                // synthetic key so repeats of this common case get destacked too.
+                val lineKey = cue.line to cue.lineType
+                val stackIndex = stackIndexByLineKey.getOrDefault(lineKey, 0)
+                stackIndexByLineKey[lineKey] = stackIndex + 1
+                if (stackIndex == 0) {
+                    cue
+                } else {
+                    changed = true
+                    offsetCueLine(cue, stackIndex)
+                }
+            }
+            return result to changed
+        }
+
+        private fun offsetCueLine(cue: Cue, stackIndex: Int): Cue {
+            return when {
+                cue.line == Cue.DIMEN_UNSET -> {
+                    // No explicit position to offset from - anchor extra cues to an
+                    // explicit line a bit further up from the implied default bottom
+                    // line (-1) instead, so they don't sit exactly where the
+                    // unpositioned (first) cue renders.
+                    cue.buildUpon()
+                        .setLine(-1f - stackIndex, Cue.LINE_TYPE_NUMBER)
+                        .build()
+                }
+                cue.lineType == Cue.LINE_TYPE_NUMBER -> {
+                    // Negative line numbers count up from the bottom of the viewport;
+                    // non-negative ones count down from the top. Stack further in
+                    // whichever direction keeps the cue moving away from the edge it's
+                    // anchored to.
+                    val newLine = if (cue.line < 0) cue.line - stackIndex else cue.line + stackIndex
+                    cue.buildUpon().setLine(newLine, cue.lineType).build()
+                }
+                cue.lineType == Cue.LINE_TYPE_FRACTION -> {
+                    val newLine = (cue.line - stackIndex * LINE_FRACTION_STACK_STEP).coerceIn(0f, 1f)
+                    cue.buildUpon().setLine(newLine, cue.lineType).build()
+                }
+                else -> cue
             }
         }
 
@@ -186,5 +253,11 @@ class CleanedSubtitleParserFactory(
         private val DRAWING_RUN_REGEX = Regex(
             "(?:\\b[mnlbsc](?:\\s+-?\\d+(?:\\.\\d+)?)+\\s*){2,}"
         )
+
+        // How far (as a fraction of the viewport, 0f..1f) to nudge each additional
+        // overlapping cue that uses a fractional line position. Chosen to roughly
+        // clear one line of subtitle text at typical font sizes without needing to
+        // know the real rendered text height.
+        private const val LINE_FRACTION_STACK_STEP = 0.08f
     }
 }

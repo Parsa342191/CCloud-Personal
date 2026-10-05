@@ -86,6 +86,15 @@ sealed class AppScreens(
         showSidebar = false
     )
 
+    // "query" is the URL-encoded search text to look up on Google - see
+    // SearchScreen's "Search on Google" button and GoogleTitleSearchScreen.
+    data object GoogleTitleSearch : AppScreens(
+        route = "google_title_search/{query}",
+        resourceId = R.string.search,
+        showBottomBar = false,
+        showSidebar = false
+    )
+
     companion object {
         val screens = listOf(Movies, Series, Search, Favorites, Settings)
     }

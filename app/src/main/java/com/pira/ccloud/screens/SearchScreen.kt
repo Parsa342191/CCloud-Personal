@@ -50,6 +50,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,6 +98,23 @@ fun SearchScreen(
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
         keyboardController?.show()
+    }
+
+    // Picks up a title the user selected on the "Search on Google" page (see
+    // GoogleTitleSearchScreen) once we're back here - it's handed back via this
+    // entry's own SavedStateHandle rather than a shared ViewModel reference, so
+    // this screen doesn't need to know anything about that one beyond the key.
+    val savedStateHandle = navController?.currentBackStackEntry?.savedStateHandle
+    val googleSelectedTitle = savedStateHandle
+        ?.getStateFlow<String?>(GOOGLE_SELECTED_TITLE_KEY, null)
+        ?.collectAsState()
+    LaunchedEffect(googleSelectedTitle?.value) {
+        val title = googleSelectedTitle?.value
+        if (!title.isNullOrBlank()) {
+            viewModel.updateSearchQuery(title)
+            viewModel.triggerSearch()
+            savedStateHandle.remove<String>(GOOGLE_SELECTED_TITLE_KEY)
+        }
     }
     
     Column(
@@ -176,6 +194,27 @@ fun SearchScreen(
             shape = RoundedCornerShape(24.dp),
             singleLine = true
         )
+
+        // Lets the user look up a title's English/romanized name on Google when
+        // typing it in Persian doesn't match anything - see GoogleTitleSearchScreen.
+        if (viewModel.searchQuery.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        focusManager.clearFocus()
+                        val encodedQuery = java.net.URLEncoder.encode(viewModel.searchQuery, "UTF-8")
+                        navController?.navigate("google_title_search/$encodedQuery")
+                    }
+                ) {
+                    Text("جستجو در گوگل")
+                }
+            }
+        }
         
         // Country stories section - only visible when no search has been performed
         if (!viewModel.hasSearched) {

@@ -18,6 +18,7 @@ import com.pira.ccloud.screens.SingleSeriesScreen
 import com.pira.ccloud.screens.SplashScreen
 import com.pira.ccloud.screens.FavoritesScreen
 import com.pira.ccloud.screens.CountryScreen
+import com.pira.ccloud.screens.GoogleTitleSearchScreen
 import com.pira.ccloud.ui.movies.MoviesViewModel
 import com.pira.ccloud.ui.search.SearchViewModel
 import com.pira.ccloud.ui.series.SeriesViewModel
@@ -113,6 +114,18 @@ fun AppNavigation(
         ) { backStackEntry ->
             val countryId = backStackEntry.arguments?.getString("countryId")?.toIntOrNull() ?: 0
             CountryScreen(countryId = countryId, viewModel = countryViewModel, navController = navController)
+        }
+        composable(
+            route = AppScreens.GoogleTitleSearch.route,
+            arguments = listOf(navArgument("query") { defaultValue = "" })
+        ) { backStackEntry ->
+            val encodedQuery = backStackEntry.arguments?.getString("query") ?: ""
+            val query = try {
+                java.net.URLDecoder.decode(encodedQuery, "UTF-8")
+            } catch (e: Exception) {
+                encodedQuery
+            }
+            GoogleTitleSearchScreen(initialQuery = query, navController = navController)
         }
     }
 }
