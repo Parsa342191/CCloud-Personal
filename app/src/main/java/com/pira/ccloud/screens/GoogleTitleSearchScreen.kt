@@ -1,6 +1,9 @@
 package com.pira.ccloud.screens
 
 import android.annotation.SuppressLint
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Box
@@ -42,11 +45,27 @@ const val GOOGLE_SELECTED_TITLE_KEY = "google_selected_title"
  *
  * This is a real WebView the user interacts with directly - not automated scraping
  * of Google's results - so it doesn't touch Google's terms around automated
- * querying. "Use this title" simply reads whatever text the user has highlighted
- * on the page (via `window.getSelection()`) and feeds it back into the app's own
- * search as the query.
+ * querying.
+ *
+ * Picking a title has two ways to work, because relying on just one turned out to
+ * be unreliable:
+ *  - **Tap a result's title** (primary, recommended way): each result heading on a
+ *    Google results page is itself a link, and on Android, long-pressing text that
+ *    is also a link normally brings up the link's own "open/copy link" menu instead
+ *    of starting text selection - so trying to *select* a title by long-pressing it
+ *    often doesn't work at all. To sidestep that, JS injected after the page loads
+ *    intercepts a plain tap (not a long-press) on each result heading, stops it
+ *    from navigating, and sends its text straight back to Kotlin via
+ *    [TitlePickerBridge].
+ *  - **Select any other text + "Use this title"** (fallback): for text that isn't
+ *    a result heading (e.g. part of a snippet), where long-press selection does
+ *    work normally, the toolbar button reads whatever is currently highlighted via
+ *    `window.getSelection()`.
+ *
+ * Either way the chosen text is handed back to [SearchScreen] via the previous
+ * back-stack entry's SavedStateHandle under [GOOGLE_SELECTED_TITLE_KEY].
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
 fun GoogleTitleSearchScreen(
     initialQuery: String,
@@ -54,6 +73,15 @@ fun GoogleTitleSearchScreen(
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+
+    fun useTitle(title: String) {
+        val cleaned = title.trim()
+        if (cleaned.isEmpty()) return
+        navController?.previousBackStackEntry
+            ?.savedStateHandle
+            ?.set(GOOGLE_SELECTED_TITLE_KEY, cleaned)
+        navController?.popBackStack()
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -73,8 +101,8 @@ fun GoogleTitleSearchScreen(
                     )
                 }
                 Text(
-                    text = initialQuery,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "روی عنوان یه نتیجه ضربه بزنید",
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
@@ -82,22 +110,15 @@ fun GoogleTitleSearchScreen(
                         .padding(horizontal = 8.dp)
                 )
                 TextButton(onClick = {
-                    // Pull whatever the user has highlighted on the page and hand it
-                    // back to the search screen as the query to actually search for
-                    // in the app's own catalog.
+                    // Fallback for text that isn't a result heading: pull whatever
+                    // the user has manually highlighted on the page instead.
                     webView?.evaluateJavascript(
                         "(function(){ var s = window.getSelection(); return s ? s.toString() : ''; })()"
                     ) { rawResult ->
-                        val selected = decodeJsStringResult(rawResult)
-                        if (selected.isNotEmpty()) {
-                            navController?.previousBackStackEntry
-                                ?.savedStateHandle
-                                ?.set(GOOGLE_SELECTED_TITLE_KEY, selected)
-                            navController?.popBackStack()
-                        }
+                        useTitle(decodeJsStringResult(rawResult))
                     }
                 }) {
-                    Text("Use this title")
+                    Text("Use selected text")
                 }
             }
 
@@ -111,9 +132,22 @@ fun GoogleTitleSearchScreen(
                         settings.setSupportZoom(true)
                         settings.builtInZoomControls = true
                         settings.displayZoomControls = false
+
+                        // Runs tap-triggered callbacks from the injected JS below.
+                        // @JavascriptInterface methods are invoked on a WebView
+                        // background thread, not the main thread, so hop back to
+                        // the main thread before touching Compose state/navigation.
+                        addJavascriptInterface(
+                            TitlePickerBridge { title ->
+                                Handler(Looper.getMainLooper()).post { useTitle(title) }
+                            },
+                            "AndroidTitlePicker"
+                        )
+
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
+                                view?.evaluateJavascript(TAP_TO_PICK_TITLE_JS, null)
                             }
                         }
                         webView = this
@@ -133,6 +167,42 @@ fun GoogleTitleSearchScreen(
         }
     }
 }
+
+/** Bridges a tapped result title from page JS (see [TAP_TO_PICK_TITLE_JS]) back to Kotlin. */
+private class TitlePickerBridge(private val onPicked: (String) -> Unit) {
+    @JavascriptInterface
+    fun onTitlePicked(title: String) {
+        onPicked(title)
+    }
+}
+
+/**
+ * Finds each organic result's heading (Google wraps these in an "h3") and:
+ *  - gives it a visible underline so it's clear it's tappable for this purpose;
+ *  - intercepts a plain tap on it in the capture phase (so this runs before the
+ *    link's own click/navigation handling), stops that default navigation, and
+ *    reports its text to [TitlePickerBridge] instead.
+ * Re-run after every page load (including paging to more results), since it only
+ * affects elements present at the time it runs.
+ */
+private const val TAP_TO_PICK_TITLE_JS = """
+(function() {
+    var headings = document.querySelectorAll('h3');
+    for (var i = 0; i < headings.length; i++) {
+        var h = headings[i];
+        if (h.dataset.titlePickerBound) continue;
+        h.dataset.titlePickerBound = '1';
+        h.style.textDecoration = 'underline';
+        h.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.AndroidTitlePicker) {
+                window.AndroidTitlePicker.onTitlePicked(this.innerText);
+            }
+        }, true);
+    }
+})();
+"""
 
 /**
  * [WebView.evaluateJavascript]'s callback receives the result JSON-encoded (e.g. a
